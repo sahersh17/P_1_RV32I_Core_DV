@@ -9,6 +9,9 @@ jobs:
   external:
     runs-on: ubuntu-24.04
     timeout-minutes: 24
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -21,9 +24,9 @@ jobs:
           python -m pip install -r tb/requirements.txt
       - name: Cache Spike
         id: spike-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
-          path: build/spike
+          path: build/spike/spike
           key: spike-v1.1.0-ubuntu-24.04-commitlog
       - name: Build Spike with commit logging
         if: steps.spike-cache.outputs.cache-hit != 'true'
@@ -32,11 +35,19 @@ jobs:
           mkdir -p build/spike
           cd build/spike
           ../spike-source/configure --enable-commitlog
-          make -j2 spike
+          make -j"$(nproc)" spike
+      - name: Save Spike build
+        if: steps.spike-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/spike/spike
+          key: spike-v1.1.0-ubuntu-24.04-commitlog
       - name: Get architectural test inputs
         run: git clone --depth 1 --branch 3.10.0 https://github.com/riscv/riscv-arch-test.git build/riscv-arch-test
       - name: Run cocotb, Spike trace comparison, and architectural signatures
-        run: python tb/verify_external.py --spike "$PWD/build/spike/spike" --arch-test build/riscv-arch-test
+        run: |
+          mkdir -p build/external
+          python tb/verify_external.py --spike "$PWD/build/spike/spike" --arch-test build/riscv-arch-test 2>&1 | tee build/external/verification.log
       - name: Retain verification evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -44,6 +55,7 @@ jobs:
           name: rv32i-external-evidence
           path: |
             build/external/summary.json
+            build/external/verification.log
             build/external/**/*.xml
             build/external/*.spike.log
             build/external/*.spike.sig
