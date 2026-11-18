@@ -19,8 +19,12 @@ jobs:
           python-version: '3.12'
       - name: Install compiler, simulator, and Python dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-riscv64-unknown-elf iverilog device-tree-compiler libboost-regex-dev libboost-system-dev
+          # Hosted runner mirror selection can route large downloads to a slow regional mirror.
+          if test -f /etc/apt/apt-mirrors.txt; then
+            printf '%s\n' https://archive.ubuntu.com/ubuntu/ | sudo tee /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=60 update
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=60 install -y --no-install-recommends gcc-riscv64-unknown-elf iverilog device-tree-compiler libboost-regex-dev libboost-system-dev
           python -m pip install -r tb/requirements.txt
       - name: Cache Spike
         id: spike-cache
