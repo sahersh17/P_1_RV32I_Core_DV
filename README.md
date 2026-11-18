@@ -49,13 +49,18 @@ The runner executes the complete pinned `rv32i_m/I` source directory on both cor
 
 | Check | Result |
 | --- | --- |
-| Pipelined and single-cycle differential regressions | 12 directed and 2,000 constrained-random programs per core |
+| Pipelined and single-cycle differential regressions | 12 directed and 2,000 constrained-random programs per core, zero mismatches |
 | ISA operations exercised | 47 of 47 instruction types tracked by the regression |
 | Pipeline coverage | 10 of 10 bins including all four operand forwarding paths, load-use stalls, taken and untaken branches, both memory wait types, and simultaneous forwarding from two stages |
 | Verilator lint | Passed with `-Wall` on both RTL tops |
 | Generic synthesis | Passed Yosys synthesis and structural checks for the pipelined top |
-| Formal | Pipeline and trap properties passed with SymbiYosys and ABC PDR |
+| Formal | Eight pipeline and trap assertions proved with SymbiYosys and ABC PDR |
+| Upstream RV32I architectural signatures | 39 of 39 tests passed per core using riscv-arch-test 3.10.0 |
+| Spike retirement scoreboard | 648 instructions matched across nine ELF programs per core |
+| cocotb unit tests | All four passed |
 
 Formal checks cover aligned fetch, zero reads from x0, valid retirement writes, selected forwarded data, execute-slot invalidation after a squash or load-use bubble, stable outstanding data requests, and trap redirection without admitting the faulting instruction or younger instructions.
 
 The RTL workflow retains coverage, synthesis, and formal proof logs. The external workflow retains cocotb reports, per-program results, and Spike signatures. See the [bug log](docs/bug-log.md) for the original trap and retirement regressions.
+
+The [external verification run](https://github.com/sahersh17/P_1_RV32I_Core_DV/actions/runs/44378269344) contains the upstream signature results and Spike comparison logs. The [RTL verification run](https://github.com/sahersh17/P_1_RV32I_Core_DV/actions/runs/44378269439) contains coverage, synthesis, and proof evidence. The [Project 2 handoff](docs/handoff.md) lists the integration interface and synthesis inputs.
