@@ -1,0 +1,4 @@
+read_verilog -sv rtl/rv32i_alu.sv rtl/rv32i_core.sv rtl/rv32i_decode.sv rtl/rv32i_execute.sv rtl/rv32i_lsu.sv rtl/rv32i_regfile.sv
+synth -top rv32i_core
+check -assert
+stat
