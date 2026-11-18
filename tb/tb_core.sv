@@ -9,7 +9,8 @@ module tb_core;
     logic [31:0] rom [0:255];
     logic [31:0] ram [0:255];
     integer cycle = 0, count, test_id;
-    bit wait_states;
+    bit wait_states, completed;
+    localparam logic [31:0] COMPLETION_STORE = 32'h3e002e23;
     logic [9:0] coverage_bits = 0;
     wire imem_ready = !wait_states || cycle % 7 != 2;
     wire dmem_ready = !wait_states || cycle % 5 == 0;
@@ -30,8 +31,9 @@ module tb_core;
                 for (integer b = 0; b < 4; b++)
                     if (dmem_wstrb[b])
                         ram[dmem_addr[9:2]][8*b +: 8] <= dmem_wdata[8*b +: 8];
-            end
+            end else $display("LOAD %h", dmem_addr);
         end
+        if (halted) $fatal(1, "Core halted instead of taking a trap");
         if (retire_valid)
             $display("RETIRE %h %h %0d %h", retire_pc, retire_insn,
                      retire_we ? retire_rd : 5'b0, retire_we ? retire_value : 32'b0);
@@ -51,6 +53,10 @@ module tb_core;
 `endif
     end
 
+    always @(posedge clk)
+        if (!reset_n) completed <= 0;
+        else if (retire_valid && retire_insn == COMPLETION_STORE) completed <= 1;
+
     initial begin
         if (!$value$plusargs("cases=%d", count)) $fatal(1, "Specify +cases=N");
         if ($test$plusargs("waves")) begin
@@ -65,9 +71,8 @@ module tb_core;
             for (integer w = 0; w < 256; w++) ram[w] = 0;
             repeat (2) @(negedge clk);
             reset_n = 1;
-            for (integer c = 0; !halted && c < 1800; c++) @(negedge clk);
-            if (!halted) $fatal(1, "Case %0d timed out", test_id);
-            repeat (2) @(negedge clk);
+            for (integer c = 0; !completed && c < 1800; c++) @(negedge clk);
+            if (!completed) $fatal(1, "Case %0d timed out", test_id);
         end
         $display("COVERAGE %h", coverage_bits);
         $finish;

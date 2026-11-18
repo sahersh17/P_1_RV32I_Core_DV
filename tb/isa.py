@@ -6,7 +6,12 @@ I_OPS = ("addi", "slli", "slti", "sltiu", "xori", "srli", "ori", "andi")
 LOADS = {"lb": (0, 1), "lh": (1, 2), "lw": (2, 4), "lbu": (4, 1), "lhu": (5, 2)}
 STORES = {"sb": 1, "sh": 2, "sw": 4}
 BRANCHES = {"beq": 0, "bne": 1, "blt": 4, "bge": 5, "bltu": 6, "bgeu": 7}
-SYSTEM = {"fence": 0x0FF0000F, "ecall": 0x73, "ebreak": 0x100073, "illegal": MASK}
+SYSTEM = {"fence": 0x0FF0000F, "ecall": 0x73, "ebreak": 0x100073, "mret": 0x30200073, "illegal": MASK}
+CSR_OPS = {"csrrw": 1, "csrrs": 2, "csrrc": 3, "csrrwi": 5, "csrrsi": 6, "csrrci": 7}
+COMPLETION = ("sw", 0, 0, 1020)
+MSTATUS, MTVEC, MSCRATCH, MEPC, MCAUSE, MTVAL = 0x300, 0x305, 0x340, 0x341, 0x342, 0x343
+MSTATUS_FIXED = 3 << 11
+CSR_FIXED = {0x301: 0x40000100, **dict.fromkeys((0x304, 0x310, 0x344, 0xF11, 0xF12, 0xF13, 0xF14), 0)}
 
 
 def sx(value, bits):
@@ -37,6 +42,8 @@ def encode(op, rd, a, b):
                 (b >> 12 & 255) << 12 | rd << 7 | 0x6F)
     if op in ("lui", "auipc"):
         return b & 0xFFFFF000 | rd << 7 | (0x37 if op == "lui" else 0x17)
+    if op in CSR_OPS:
+        return b << 20 | a << 15 | CSR_OPS[op] << 12 | rd << 7 | 0x73
     return SYSTEM[op]
 
 
@@ -45,14 +52,25 @@ def reference(program):
     data = bytearray(1024)
     events = []
     covered = set()
+    csr = dict.fromkeys((MTVEC, MSCRATCH, MEPC, MCAUSE, MTVAL), 0)
+    csr[MSTATUS] = MSTATUS_FIXED
     pc = 0
     for _ in range(1000):
-        op, rd, a, b = program[pc // 4]
+        instruction = program[pc // 4]
+        op, rd, a, b = instruction
+        word = encode(*instruction)
         covered.add(op)
         left = regs[a]
         target = pc + 4
         value = None
-        halt = op in ("ecall", "ebreak", "illegal")
+        cause = None
+        fault_value = 0
+        if op == "ecall":
+            cause = 11
+        elif op == "ebreak":
+            cause, fault_value = 3, pc
+        elif op == "illegal":
+            cause, fault_value = 2, word
         if op in ("lui", "auipc"):
             value = b + (pc if op == "auipc" else 0)
         elif op in ("jal", "jalr"):
@@ -71,15 +89,37 @@ def reference(program):
         elif op in LOADS or op in STORES:
             addr = (left + b) & MASK
             size = LOADS[op][1] if op in LOADS else STORES[op]
-            halt = addr % size != 0
-            if not halt and op in LOADS:
+            if addr % size:
+                cause, fault_value = (4 if op in LOADS else 6), addr
+            elif op in LOADS:
+                events.append(("LOAD", addr))
                 value = int.from_bytes(data[addr:addr + size], "little", signed=op in ("lb", "lh", "lw"))
-            elif not halt:
+            else:
                 stored = regs[rd] & ((1 << (size * 8)) - 1)
                 data[addr:addr + size] = stored.to_bytes(size, "little")
                 events.append(("STORE", addr, ((1 << size) - 1) << (addr % 4),
                                (regs[rd] << (8 * (addr % 4))) & MASK))
-        elif op != "fence" and not halt:
+        elif op in CSR_OPS:
+            source = a if op.endswith("i") else left
+            write = op in ("csrrw", "csrrwi") or a != 0
+            if b not in csr and b not in CSR_FIXED or write and b >> 10 == 3:
+                cause, fault_value = 2, word
+            else:
+                value = csr.get(b, CSR_FIXED.get(b))
+                if write and b in csr:
+                    if op in ("csrrs", "csrrsi"):
+                        source |= value
+                    elif op in ("csrrc", "csrrci"):
+                        source = value & ~source
+                    if b in (MTVEC, MEPC):
+                        source &= ~3
+                    elif b == MSTATUS:
+                        source = MSTATUS_FIXED | (source & 0x88)
+                    csr[b] = source
+        elif op == "mret":
+            target = csr[MEPC]
+            csr[MSTATUS] = MSTATUS_FIXED | 0x80 | ((csr[MSTATUS] & 0x80) >> 4)
+        elif op != "fence" and cause is None:
             immediate = op in I_OPS or op == "srai"
             right = (b & MASK) if immediate else regs[b]
             kind = "sltu" if op == "sltiu" else op.removesuffix("i")
@@ -90,12 +130,18 @@ def reference(program):
                 "xor": left ^ right, "srl": left >> shift, "sra": sx(left, 32) >> shift,
                 "or": left | right, "and": left & right,
             }[kind]
-        halt |= bool(target % 4)
-        written = rd if value is not None and not halt else 0
+        if target % 4:
+            cause, fault_value = 0, target & MASK
+        if cause is not None:
+            csr[MEPC], csr[MCAUSE], csr[MTVAL] = pc, cause, fault_value
+            csr[MSTATUS] = MSTATUS_FIXED | ((csr[MSTATUS] & 8) << 4)
+            pc = csr[MTVEC]
+            continue
+        written = rd if value is not None else 0
         if written:
             regs[written] = value & MASK
-        events.append(("RETIRE", pc, encode(op, rd, a, b), written, regs[written]))
-        if halt:
+        events.append(("RETIRE", pc, word, written, regs[written]))
+        if instruction == COMPLETION:
             return events, covered
         pc = target
-    raise ValueError("Reference program did not halt")
+    raise ValueError("Reference program did not reach the completion store")
