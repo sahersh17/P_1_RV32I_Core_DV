@@ -23,6 +23,6 @@ jobs:
           python3 tb/run.py --single-cycle --random 100
       - name: Synthesize
         run: yosys -Q -T -s scripts/synth.ys
-      - name: Prove six properties
+      - name: Prove pipeline and trap properties
         working-directory: formal
         run: sby -f core.sby
