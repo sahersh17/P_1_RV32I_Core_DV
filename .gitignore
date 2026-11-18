@@ -1,0 +1,9 @@
+/build/
+/formal/core/
+/formal/core_prove/
+/formal/core_cover/
+__pycache__/
+*.vcd
+*.vvp
+.venv/
+/.codex/
