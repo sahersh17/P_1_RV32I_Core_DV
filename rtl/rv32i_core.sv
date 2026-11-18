@@ -1,4 +1,6 @@
-module rv32i_core (
+module rv32i_core #(
+    parameter logic [31:2] RESET_PC_WORD = 0
+) (
     input  logic clk, reset_n,
     output logic imem_valid,
     output logic [31:0] imem_addr,
@@ -98,7 +100,7 @@ module rv32i_core (
 
     always_ff @(posedge clk) begin
         if (!reset_n) begin
-            fetch_pc <= 0;
+            fetch_pc <= {RESET_PC_WORD, 2'b00};
             decode_stage <= '0;
             execute_stage <= '0;
             memory_stage <= '0;

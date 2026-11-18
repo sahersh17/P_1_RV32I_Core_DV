@@ -1,4 +1,6 @@
-module rv32i_single_cycle (
+module rv32i_single_cycle #(
+    parameter logic [31:2] RESET_PC_WORD = 0
+) (
     input  logic clk, reset_n,
     output logic imem_valid,
     output logic [31:0] imem_addr,
@@ -51,7 +53,7 @@ module rv32i_single_cycle (
 
     always_ff @(posedge clk) begin
         if (!reset_n) begin
-            pc <= 0;
+            pc <= {RESET_PC_WORD, 2'b00};
             pending <= 0;
             pending_insn <= 0;
         end else if (advance) begin
