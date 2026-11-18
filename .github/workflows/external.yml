@@ -1,0 +1,50 @@
+name: External RV32I verification
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  external:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install compiler, simulator, and Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-riscv64-unknown-elf iverilog device-tree-compiler libboost-regex-dev libboost-system-dev
+          python -m pip install -r tb/requirements.txt
+      - name: Cache Spike
+        id: spike-cache
+        uses: actions/cache@v4
+        with:
+          path: build/spike
+          key: spike-v1.1.0-ubuntu-24.04-commitlog
+      - name: Build Spike with commit logging
+        if: steps.spike-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch v1.1.0 https://github.com/riscv-software-src/riscv-isa-sim.git build/spike-source
+          mkdir -p build/spike
+          cd build/spike
+          ../spike-source/configure --enable-commitlog
+          make -j2 spike
+      - name: Get architectural test inputs
+        run: git clone --depth 1 --branch 3.10.0 https://github.com/riscv/riscv-arch-test.git build/riscv-arch-test
+      - name: Run cocotb, Spike trace comparison, and architectural signatures
+        run: python tb/verify_external.py --spike "$PWD/build/spike/spike" --arch-test build/riscv-arch-test
+      - name: Retain verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rv32i-external-evidence
+          path: |
+            build/external/summary.json
+            build/external/**/*.xml
+            build/external/*.spike.log
+            build/external/*.spike.sig
+          if-no-files-found: ignore
