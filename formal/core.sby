@@ -6,7 +6,7 @@ depth 12
 abc pdr
 
 [script]
-read -formal rv32i_alu.sv rv32i_decode.sv rv32i_regfile.sv rv32i_execute.sv rv32i_lsu.sv rv32i_core.sv
+read -formal rv32i_alu.sv rv32i_decode.sv rv32i_regfile.sv rv32i_execute.sv rv32i_lsu.sv rv32i_machine.sv rv32i_core.sv
 prep -top rv32i_core
 
 [files]
@@ -15,4 +15,5 @@ prep -top rv32i_core
 ../rtl/rv32i_regfile.sv
 ../rtl/rv32i_execute.sv
 ../rtl/rv32i_lsu.sv
+../rtl/rv32i_machine.sv
 ../rtl/rv32i_core.sv

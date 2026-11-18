@@ -5,15 +5,29 @@ import random
 import subprocess
 from pathlib import Path
 
-from isa import BRANCHES, I_OPS, LOADS, R_OPS, STORES, encode, reference
+from isa import (
+    BRANCHES, COMPLETION, CSR_OPS, I_OPS, LOADS, MCAUSE, MEPC, MSCRATCH,
+    MSTATUS, MTVAL, MTVEC, R_OPS, STORES, encode, reference,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 OPERATIONS = set(R_OPS + I_OPS + ("sub", "sra", "srai", "lui", "auipc", "jal", "jalr",
-                                    "fence", "ecall", "ebreak")) | LOADS.keys() | STORES.keys() | BRANCHES.keys()
+                                    "fence", "ecall", "ebreak")) | LOADS.keys() | STORES.keys() | BRANCHES.keys() | CSR_OPS.keys() | {"mret"}
 COVERAGE = ("EX/MEM to rs1", "EX/MEM to rs2", "MEM/WB to rs1", "MEM/WB to rs2",
             "Load-use stall", "Taken branch", "Not-taken branch", "Data wait",
             "Fetch wait", "EX/MEM rs1 with MEM/WB rs2")
+
+
+def with_handler(body, *, skip=4):
+    vector = 0x300
+    program = [("addi", 31, 0, vector | 1), ("csrrw", 0, 31, MTVEC), *body, COMPLETION]
+    program += [("addi", 0, 0, 0)] * (vector // 4 - len(program))
+    return program + [
+        ("csrrs", 25, 0, MCAUSE), ("csrrs", 26, 0, MEPC),
+        ("csrrs", 27, 0, MTVAL), ("csrrs", 28, 0, MSTATUS),
+        ("addi", 26, 26, skip), ("csrrw", 0, 26, MEPC), ("mret", 0, 0, 0),
+    ]
 
 
 def directed():
@@ -28,13 +42,27 @@ def directed():
         ("lb", 12, 0, 7), ("lbu", 13, 0, 7), ("sh", 11, 0, 10),
         ("lh", 14, 0, 10), ("lhu", 15, 0, 10), ("fence", 0, 0, 0), ("ebreak", 0, 0, 0),
     ]
-    return [
+    bodies = [
         main, main[:-1] + [("ecall", 0, 0, 0)],
         [("lw", 1, 0, 1), ("sw", 0, 0, 8)],
         [("jal", 2, 0, 2), ("sw", 0, 0, 8)],
         [("illegal", 0, 0, 0), ("sw", 0, 0, 8)],
         [("sh", 0, 0, 1), ("sw", 0, 0, 8)],
         [("addi", 1, 0, 3), ("jalr", 2, 1, 0), ("sw", 0, 0, 8)],
+        [("csrrsi", 1, 8, MSTATUS), ("ecall", 0, 0, 0), ("csrrs", 2, 0, MSTATUS),
+         ("ebreak", 0, 0, 0), ("csrrs", 3, 0, MSTATUS)],
+        [("csrrwi", 1, 7, MSCRATCH), ("csrrci", 2, 3, MSCRATCH),
+         ("csrrsi", 3, 2, MSCRATCH), ("csrrc", 4, 3, MSCRATCH),
+         ("csrrs", 5, 4, MSCRATCH), ("csrrw", 6, 5, MSCRATCH),
+         ("csrrs", 7, 0, MSCRATCH), ("csrrs", 8, 0, 0xF14),
+         ("csrrw", 8, 0, 0xF14), ("csrrs", 9, 0, 0xFFF)],
+        [("bne", 2, 0, 0), ("beq", 2, 0, 0)],
+    ]
+    squash = [("addi", 1, 0, 19), ("sw", 1, 0, 4), ("ecall", 0, 0, 0),
+              ("sw", 1, 0, 8), ("lw", 2, 0, 4)]
+    return [with_handler(body) for body in bodies] + [
+        with_handler(squash, skip=8),
+        with_handler(squash, skip=8),
     ]
 
 
@@ -63,7 +91,7 @@ def randomized(rng):
         if op in arithmetic or op in LOADS:
             previous = rd
     program += [("fence", 0, 0, 0), ("ecall", 0, 0, 0)]
-    return program
+    return with_handler(program)
 
 
 def parse_trace(lines):
@@ -78,7 +106,7 @@ def parse_trace(lines):
             if int(fields[1]) != len(cases):
                 raise SystemExit(f"Unexpected case number in {line}")
             cases.append([])
-        elif kind in ("STORE", "RETIRE"):
+        elif kind in ("LOAD", "STORE", "RETIRE"):
             values = [int(v, 10 if kind == "RETIRE" and pos == 2 else 16)
                       for pos, v in enumerate(fields[1:])]
             cases[-1].append((kind, *values))
@@ -130,7 +158,7 @@ def main():
     if result.returncode or len(actual) != len(expected):
         raise SystemExit(f"Simulation exited with status {result.returncode} after {len(actual)} cases. See {work / 'simulation.log'}")
     for index, (got, wanted) in enumerate(zip(actual, expected)):
-        for kind in ("STORE", "RETIRE"):
+        for kind in ("LOAD", "STORE", "RETIRE"):
             got_kind = [event for event in got if event[0] == kind]
             wanted_kind = [event for event in wanted if event[0] == kind]
             if got_kind != wanted_kind:

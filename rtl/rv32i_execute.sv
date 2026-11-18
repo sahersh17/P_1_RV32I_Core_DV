@@ -1,7 +1,11 @@
 module rv32i_execute (
     input  logic valid,
     input  logic [31:0] insn, pc, operand_a, operand_b,
-    output logic uses_a, uses_b, write_rd, halt, load, store, redirect,
+    input  logic csr_illegal,
+    input  logic [31:0] csr_read, return_pc,
+    output logic uses_a, uses_b, write_rd, trap, mret, load, store, redirect,
+    output logic [3:0] cause,
+    output logic [31:0] trap_value,
     output logic [31:0] target, value
 );
     wire [6:0] opcode = insn[6:0];
@@ -28,7 +32,10 @@ module rv32i_execute (
 
     always @* begin
         write_rd = decoded_write;
-        halt = 0;
+        trap = 0;
+        mret = 0;
+        cause = 0;
+        trap_value = 0;
         load = 0;
         store = 0;
         value = alu_result;
@@ -48,16 +55,43 @@ module rv32i_execute (
                 load = opcode == 7'h03;
                 store = opcode == 7'h23;
                 case (funct3[1:0])
-                    2'b01: halt = value[0];
-                    2'b10: halt = value[1:0] != 0;
-                    default: halt = 0;
+                    2'b01: trap = value[0];
+                    2'b10: trap = value[1:0] != 0;
+                    default: trap = 0;
                 endcase
             end
-            7'h73: halt = 1;
+            7'h73: begin
+                case (insn)
+                    32'h00000073, 32'h00100073: begin
+                        trap = 1;
+                        cause = insn[20] ? 4'd3 : 4'd11;
+                        trap_value = insn[20] ? pc : 0;
+                    end
+                    32'h30200073: begin
+                        mret = 1;
+                        redirect = 1;
+                        target = return_pc;
+                    end
+                    default: value = csr_read;
+                endcase
+            end
             default: begin end
         endcase
-        if (illegal || halt || (redirect && target[1:0] != 0)) begin
-            halt = 1;
+        if (trap && (load || store)) begin
+            cause = load ? 4'd4 : 4'd6;
+            trap_value = value;
+        end
+        if (redirect && target[1:0] != 0) begin
+            trap = 1;
+            cause = 0;
+            trap_value = target;
+        end
+        if (illegal || csr_illegal) begin
+            trap = 1;
+            cause = 2;
+            trap_value = insn;
+        end
+        if (trap) begin
             write_rd = 0;
             load = 0;
             store = 0;

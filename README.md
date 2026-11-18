@@ -1,6 +1,6 @@
 # RV32I core design and verification
 
-A five-stage SystemVerilog RV32I core and a single-cycle RTL baseline. Both use the same execute and load/store units. The pipelined core adds EX/MEM and MEM/WB forwarding, load-use stalls, and branch squashing. The [architecture specification](docs/spec.md) contains the memory protocol and block diagram.
+A five-stage SystemVerilog RV32I core and a single-cycle RTL baseline. Both use the same execute and load/store units. The pipelined core adds EX/MEM and MEM/WB forwarding, load-use stalls, and branch squashing. Both cores implement synchronous machine-mode traps, machine CSR instructions, and MRET. The [architecture specification](docs/spec.md) contains the memory protocol and block diagram.
 
 ## Run on Windows
 
@@ -28,19 +28,19 @@ yosys -Q -T -s scripts/synth.ys
 (cd formal && sby -f core.sby)
 ```
 
-The regression compares retirement PC, instruction and register writeback along with every store address, lane mask and write data. It alternates immediate memory responses with cycles of fetch starvation and data backpressure. The default seed is 20261118. Run logs are written to `build/pipeline/simulation.log` and `build/single-cycle/simulation.log`.
+The regression compares retirement PC, instruction and register writeback along with load addresses and every store address, lane mask and write data. The trap cases check handler entry, CSR state, return, and suppression of faulting or squashed side effects. It alternates immediate memory responses with cycles of fetch starvation and data backpressure. The default seed is 20261118. Run logs are written to `build/pipeline/simulation.log` and `build/single-cycle/simulation.log`.
 
 ## Verification status
 
 | Check | Result |
 | --- | --- |
-| Pipelined and single-cycle differential regressions | Each passed 7 directed and 2,000 constrained-random programs, with 135,993 retirements and 10,243 stores per core |
-| ISA operations exercised | 40 of 40 implemented instruction types |
+| Pipelined and single-cycle differential regressions | 12 directed and 2,000 constrained-random programs per core |
+| ISA operations exercised | 47 of 47 instruction types tracked by the regression |
 | Pipeline coverage | 10 of 10 bins including all four operand forwarding paths, load-use stalls, taken and untaken branches, both memory wait types, and simultaneous forwarding from two stages |
 | Verilator lint | Passed with `-Wall` on both RTL tops |
 | Generic synthesis | Passed Yosys synthesis and structural checks for the pipelined top |
-| Formal | Six safety properties passed with SymbiYosys and ABC PDR |
+| Formal | Pipeline and trap properties passed with SymbiYosys and ABC PDR |
 
-Formal checks cover aligned fetch, zero reads from x0, valid retirement writes, selected forwarded data, execute-slot invalidation after a squash or load-use bubble, and stable outstanding data requests.
+Formal checks cover aligned fetch, zero reads from x0, valid retirement writes, selected forwarded data, execute-slot invalidation after a squash or load-use bubble, stable outstanding data requests, and trap redirection without admitting the faulting instruction or younger instructions.
 
-The GitHub Actions workflow runs lint, short regressions for both cores, synthesis, and formal verification. Official [RISC-V Architectural Certification Tests](https://github.com/riscv/riscv-arch-test), Spike comparison, and cocotb unit tests are pending. The current cores halt on faults and system calls, so certification tests that expect architectural trap handling need a corresponding design and harness update.
+The GitHub Actions workflow runs lint, short regressions for both cores, synthesis, and formal verification. Official [RISC-V Architectural Certification Tests](https://github.com/riscv/riscv-arch-test), Spike comparison, and cocotb unit tests are pending. The simulator regression uses a Python reference model.

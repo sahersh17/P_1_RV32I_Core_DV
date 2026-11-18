@@ -20,17 +20,16 @@ module rv32i_core (
     } issue_t;
 
     typedef struct packed {
-        logic valid, write_rd, halt, load, store;
+        logic valid, write_rd, load, store;
         logic [31:0] pc, insn, value, store_data;
     } memory_t;
 
     typedef struct packed {
-        logic valid, write_rd, halt;
+        logic valid, write_rd;
         logic [31:0] pc, insn, value;
     } writeback_t;
 
     logic [31:0] fetch_pc;
-    logic stop_fetch;
     issue_t decode_stage, execute_stage;
     memory_t memory_stage, execute_result;
     writeback_t wb_stage;
@@ -43,19 +42,27 @@ module rv32i_core (
     wire [4:0] wb_rd = wb_stage.insn[11:7];
 
     logic [31:0] reg_a, reg_b, operand_a, operand_b, ex_value;
-    logic ex_uses_a, ex_uses_b, ex_writes, ex_halt, ex_load, ex_store;
+    logic ex_uses_a, ex_uses_b, ex_writes, ex_trap, ex_mret, ex_load, ex_store;
     logic id_uses_a, id_uses_b, id_unused_write, id_unused_illegal;
     logic [31:0] id_unused_imm;
-    logic redirect;
-    logic [31:0] target, load_result;
+    logic redirect, csr_illegal;
+    logic [31:0] target, load_result, csr_read, trap_pc, return_pc, trap_value;
+    logic [3:0] trap_cause;
+    wire memory_wait = dmem_valid && !dmem_ready;
+    wire trap_taken = execute_valid && ex_trap;
 
     rv32i_execute execute_op(execute_valid, execute_stage.insn, execute_stage.pc,
-                            operand_a, operand_b, ex_uses_a, ex_uses_b,
-                            ex_writes, ex_halt, ex_load, ex_store, redirect, target, ex_value);
+                            operand_a, operand_b, csr_illegal, csr_read, return_pc, ex_uses_a, ex_uses_b,
+                            ex_writes, ex_trap, ex_mret, ex_load, ex_store, redirect,
+                            trap_cause, trap_value, target, ex_value);
+    rv32i_machine machine(clk, reset_n, execute_valid && !memory_wait,
+                          execute_stage.insn[6:0], execute_stage.insn[14:12], rs1, execute_stage.insn[31:20],
+                          execute_stage.pc, operand_a, ex_trap, ex_mret,
+                          trap_cause, trap_value, csr_illegal, csr_read, trap_pc, return_pc);
     rv32i_decode decode_id(decode_stage.insn, id_unused_imm, id_uses_a, id_uses_b, id_unused_write, id_unused_illegal);
     rv32i_regfile regfile(clk, reset_n, retire_we, rs1, rs2, wb_rd, wb_stage.value, reg_a, reg_b);
 
-    assign execute_result = {execute_valid, ex_writes, ex_halt, ex_load, ex_store,
+    assign execute_result = {execute_valid && !ex_trap, ex_writes, ex_load, ex_store,
                              execute_stage.pc, execute_stage.insn, ex_value, operand_b};
 
     wire mem_forward = memory_stage.valid && memory_stage.write_rd && !memory_stage.load && mem_rd != 0;
@@ -68,21 +75,20 @@ module rv32i_core (
     assign operand_a = forward_mem_a ? memory_stage.value : forward_wb_a ? wb_stage.value : reg_a;
     assign operand_b = forward_mem_b ? memory_stage.value : forward_wb_b ? wb_stage.value : reg_b;
 
-    wire exec_halt = execute_valid && ex_halt;
     wire load_use = execute_valid && ex_load && ex_rd != 0 && decode_stage.valid &&
                     ((id_uses_a && decode_stage.insn[19:15] == ex_rd) ||
                      (id_uses_b && decode_stage.insn[24:20] == ex_rd));
-    wire memory_wait = dmem_valid && !dmem_ready;
     wire [1:0] byte_offset = memory_stage.value[1:0];
 
     assign imem_addr = fetch_pc;
-    assign imem_valid = reset_n && !stop_fetch && !memory_wait && !load_use && !redirect && !exec_halt;
+    assign imem_valid = reset_n && !memory_wait && !load_use && !redirect && !trap_taken;
     assign dmem_valid = reset_n && memory_stage.valid && (memory_stage.load || memory_stage.store);
     assign dmem_write = memory_stage.store;
     assign dmem_addr = memory_stage.value;
     rv32i_lsu load_store(memory_stage.insn[14:12], byte_offset, dmem_write,
                          memory_stage.store_data, dmem_rdata, dmem_wdata, load_result, dmem_wstrb);
 
+    assign halted = 1'b0;
     assign retire_valid = reset_n && wb_stage.valid;
     assign retire_pc = wb_stage.pc;
     assign retire_insn = wb_stage.insn;
@@ -97,26 +103,21 @@ module rv32i_core (
             execute_stage <= '0;
             memory_stage <= '0;
             wb_stage <= '0;
-            stop_fetch <= 0;
-            halted <= 0;
         end else begin
-            if (wb_stage.valid && wb_stage.halt) halted <= 1;
             if (memory_wait) begin
                 wb_stage.valid <= 0;
             end else begin
                 wb_stage.valid <= memory_stage.valid;
                 wb_stage.write_rd <= memory_stage.write_rd;
-                wb_stage.halt <= memory_stage.halt;
                 wb_stage.pc <= memory_stage.pc;
                 wb_stage.insn <= memory_stage.insn;
                 wb_stage.value <= memory_stage.load ? load_result : memory_stage.value;
                 memory_stage <= execute_result;
 
-                if (redirect || exec_halt) begin
+                if (redirect || trap_taken) begin
                     decode_stage.valid <= 0;
                     execute_stage.valid <= 0;
-                    if (redirect) fetch_pc <= target;
-                    if (exec_halt) stop_fetch <= 1;
+                    fetch_pc <= trap_taken ? trap_pc : target;
                 end else if (load_use) begin
                     execute_stage.valid <= 0;
                 end else begin
@@ -140,13 +141,17 @@ module rv32i_core (
         if (past_valid && reset_n) begin
             assert(fetch_pc[1:0] == 0);
             assert((rs1 != 0 || operand_a == 0) && (rs2 != 0 || operand_b == 0));
-            assert(!retire_we || (retire_valid && retire_rd != 0 && !wb_stage.halt));
+            assert(!retire_we || (retire_valid && retire_rd != 0));
             assert((!forward_mem_a || operand_a == memory_stage.value) &&
                    (!forward_mem_b || operand_b == memory_stage.value) &&
                    (!forward_wb_a || operand_a == wb_stage.value) &&
                    (!forward_wb_b || operand_b == wb_stage.value));
-            if ($past(reset_n && !memory_wait && (redirect || exec_halt || load_use))) begin
+            if ($past(reset_n && !memory_wait && (redirect || trap_taken || load_use))) begin
                 assert(!execute_stage.valid);
+                if ($past(trap_taken)) begin
+                    assert(!memory_stage.valid && !decode_stage.valid);
+                    assert(fetch_pc == $past(trap_pc));
+                end
             end
             if ($past(reset_n && memory_wait)) begin
                 assert(dmem_valid && $stable({dmem_addr, dmem_write, dmem_wdata, dmem_wstrb}));

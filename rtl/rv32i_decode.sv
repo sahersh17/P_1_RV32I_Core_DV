@@ -56,7 +56,15 @@ module rv32i_decode (
                 illegal = funct7 != 0 && !(funct7 == 7'h20 && (funct3 == 0 || funct3 == 5));
             end
             7'h0f: illegal = funct3 != 0;
-            7'h73: illegal = insn != 32'h00000073 && insn != 32'h00100073;
+            7'h73: begin
+                if (funct3 == 0)
+                    illegal = insn != 32'h00000073 && insn != 32'h00100073 && insn != 32'h30200073;
+                else begin
+                    uses_rs1 = !funct3[2];
+                    writes_rd = 1;
+                    illegal = funct3 == 4;
+                end
+            end
             default: illegal = 1;
         endcase
     end
