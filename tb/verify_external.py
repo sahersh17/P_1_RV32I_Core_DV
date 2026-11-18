@@ -81,7 +81,7 @@ def prepare_case(args, name, source, *, env=None, trace=False):
         command += ["-l", "--log-commits"]
     log_path = BUILD / f"{name}.spike.log"
     with log_path.open("w", encoding="utf-8") as log:
-        subprocess.run([*command, str(elf), f"+signature={sig}", "+signature-granularity=4"],
+        subprocess.run([*command, f"+signature={sig}", "+signature-granularity=4", str(elf)],
                        stdout=log, stderr=subprocess.STDOUT, check=True, timeout=60)
     words = [int(line, 16) for line in sig.read_text(encoding="ascii").splitlines()]
     if len(words) != (end - start) // 4:
