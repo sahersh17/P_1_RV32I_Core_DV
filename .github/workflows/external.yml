@@ -34,7 +34,8 @@ jobs:
           git clone --depth 1 --branch v1.1.0 https://github.com/riscv-software-src/riscv-isa-sim.git build/spike-source
           mkdir -p build/spike
           cd build/spike
-          ../spike-source/configure --enable-commitlog
+          # Spike 1.1.0 relies on a transitive stdint include absent in GCC 13.
+          ../spike-source/configure --enable-commitlog CXXFLAGS="-O2 -include cstdint"
           make -j"$(nproc)" spike
       - name: Save Spike build
         if: steps.spike-cache.outputs.cache-hit != 'true'
