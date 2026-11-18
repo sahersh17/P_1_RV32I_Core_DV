@@ -1,0 +1,28 @@
+name: Verify RV32I
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: YosysHQ/setup-oss-cad-suite@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Lint
+        run: |
+          verilator --lint-only -Wall --top-module rv32i_core rtl/*.sv
+          verilator --lint-only -Wall --top-module rv32i_single_cycle rtl/*.sv
+      - name: Regression
+        run: |
+          python3 tb/run.py --random 100
+          python3 tb/run.py --single-cycle --random 100
+      - name: Synthesize
+        run: yosys -Q -T -s scripts/synth.ys
+      - name: Prove six properties
+        working-directory: formal
+        run: sby -f core.sby
