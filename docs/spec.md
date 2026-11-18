@@ -1,6 +1,6 @@
 # RV32I core specification
 
-The core starts from address zero after a synchronous, active-low reset. It executes RV32I integer arithmetic, branches, jumps, and little-endian byte, halfword, and word loads and stores. FENCE retires as a no-op on the in-order memory interface. Both cores implement machine-mode synchronous traps and MRET. The legacy halted output is held low.
+The core starts from address zero after a synchronous, active-low reset. Both top modules accept a word-address reset-vector parameter, RESET_PC_WORD. The ELF testbench sets it to 0x20000000 to start at byte address 0x80000000. It executes RV32I integer arithmetic, branches, jumps, and little-endian byte, halfword, and word loads and stores. FENCE retires as a no-op on the in-order memory interface. Both cores implement machine-mode synchronous traps and MRET. The legacy halted output is held low.
 
 The five stages are instruction fetch, decode, execute, memory, and writeback. Execute chooses the newest available operand from EX/MEM or MEM/WB. A load immediately followed by a consumer inserts one bubble when memory responds without a wait. Execute resolves branches and jumps, squashing the two younger instruction slots when control changes. A taken branch has a two-cycle penalty when memory responds immediately.
 

@@ -8,6 +8,9 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v5
       - uses: YosysHQ/setup-oss-cad-suite@v4
@@ -19,10 +22,20 @@ jobs:
           verilator --lint-only -Wall --top-module rv32i_single_cycle rtl/*.sv
       - name: Regression
         run: |
-          python3 tb/run.py --random 100
-          python3 tb/run.py --single-cycle --random 100
+          mkdir -p build/evidence
+          python3 tb/run.py --random 100 | tee build/evidence/pipeline-coverage.txt
+          python3 tb/run.py --single-cycle --random 100 | tee build/evidence/single-cycle-coverage.txt
       - name: Synthesize
-        run: yosys -Q -T -s scripts/synth.ys
+        run: yosys -Q -T -l build/evidence/synthesis.log -s scripts/synth.ys
       - name: Prove pipeline and trap properties
         working-directory: formal
         run: sby -f core.sby
+      - name: Retain regression and proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rv32i-rtl-evidence
+          path: |
+            build/evidence/
+            formal/core/logfile.txt
+          if-no-files-found: ignore
